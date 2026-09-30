@@ -24,8 +24,6 @@ import { CopyIcon, DownloadIcon, HexagonIcon, ShareIcon } from '../components/ic
 const REQUESTABLE_CODES = ['USDC', 'USDT0'] as const;
 type RequestCode = 'XLM' | (typeof REQUESTABLE_CODES)[number];
 
-const FALLBACK ='GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ';
-
 function shorten(a: string, head = 12, tail = 12): string {
   return a.length > head + tail + 1 ? `${a.slice(0, head)}…${a.slice(-tail)}` : a;
 }
@@ -37,7 +35,10 @@ export default function ReceiveScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const [address, setAddress] = useState<string>(FALLBACK);
+  // Starts null, not a placeholder address. Anything rendered here is also
+  // encoded into the QR and handed out by copy and share, so a stand-in value
+  // is a stand-in payment destination.
+  const [address, setAddress] = useState<string | null>(null);
   const [feePayer, setFeePayer] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedFp, setCopiedFp] = useState(false);
@@ -78,7 +79,7 @@ export default function ReceiveScreen() {
     setTimeout(() => setCopiedFp(false), 1200);
   }
 
-  const isContract = address.startsWith('C');
+  const isContract = address?.startsWith('C') ?? false;
 
   /** Add the USDC trustline with the user's own key, then re-check. */
   async function handleEnableUsdc() {
@@ -101,7 +102,7 @@ export default function ReceiveScreen() {
   // or a payroll tool paying the C address gets a rejection. This screen used
   // to lead with the C and call it "use this for most senders", which was
   // exactly backwards.
-  const payable = isContract && feePayer ? feePayer : address;
+  const payable: string | null = isContract && feePayer ? feePayer : address;
 
   // Which asset the QR asks for. An issued asset is requested by code AND
   // issuer, the issuer taken from the verified registry for this network —
@@ -112,11 +113,13 @@ export default function ReceiveScreen() {
   const [requestCode, setRequestCode] = useState<RequestCode>('XLM');
   const requestIssuer =
     requestCode === 'XLM' ? null : getAssetIssuer(requestCode, networkName);
-  const payUri = buildSep7PayUri(
-    requestIssuer
-      ? { destination: payable, assetCode: requestCode, assetIssuer: requestIssuer }
-      : { destination: payable },
-  );
+  const payUri = payable
+    ? buildSep7PayUri(
+        requestIssuer
+          ? { destination: payable, assetCode: requestCode, assetIssuer: requestIssuer }
+          : { destination: payable },
+      )
+    : null;
   // A request for an issued asset only means something with its issuer, so it
   // is copied and shared as the full link rather than the bare address.
   const shareText = requestIssuer ? payUri : payable;
@@ -131,22 +134,25 @@ export default function ReceiveScreen() {
    */
   const [copiedContract, setCopiedContract] = useState(false);
   async function handleCopyContract() {
+    if (!address) return;
     await Clipboard.setStringAsync(address);
     setCopiedContract(true);
     setTimeout(() => setCopiedContract(false), 1200);
   }
 
   async function handleCopy() {
+    if (!shareText) return;
     await Clipboard.setStringAsync(shareText);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   }
 
   async function handleShare() {
-    if (requestIssuer) {
+    if (requestIssuer && shareText) {
       await Share.share({ message: shareText, title: `Pay me ${requestCode}` });
       return;
     }
+    if (!address) return;
     await Share.share({ message: address, title: 'My Veil wallet address' });
   }
 
@@ -162,7 +168,7 @@ export default function ReceiveScreen() {
         }
       } catch {
         // Non-fatal — fall back to sharing the address text.
-        await Share.share({ message: address });
+        if (address) await Share.share({ message: address });
       }
     });
   }
@@ -208,16 +214,22 @@ export default function ReceiveScreen() {
           )}
 
           <View style={styles.qrFrame}>
-            <QRCode
-              value={payUri}
-              size={168}
-              backgroundColor="#F6F7F8"
-              color="#0F0F0F"
-              getRef={(c) => { qrRef.current = c as unknown as QRRef; }}
-            />
+            {payUri ? (
+              <QRCode
+                value={payUri}
+                size={168}
+                backgroundColor="#F6F7F8"
+                color="#0F0F0F"
+                getRef={(c) => { qrRef.current = c as unknown as QRRef; }}
+              />
+            ) : (
+              <View testID="receive-qr-loading" style={styles.qrPlaceholder} />
+            )}
           </View>
 
-          <Text testID="receive-address" style={styles.addr}>{shorten(payable)}</Text>
+          <Text testID="receive-address" style={styles.addr}>
+            {payable ? shorten(payable) : 'Loading your address…'}
+          </Text>
           {requestIssuer && (
             <Text testID="receive-asset-issuer" style={styles.issuerLine}>
               Asks for {requestCode} issued by {shorten(requestIssuer, 6, 6)}
@@ -294,7 +306,7 @@ export default function ReceiveScreen() {
             <View style={{ flexShrink: 1 }}>
               <Text style={styles.contractTitle}>Contract address</Text>
               <Text style={styles.contractSub} numberOfLines={1}>
-                {shorten(address, 6, 6)} ·{' '}
+                {address ? shorten(address, 6, 6) : '…'} ·{' '}
                 {copiedContract
                   ? 'copied'
                   : isContract
@@ -386,6 +398,12 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: 16,
       padding: 16,
       marginTop: 18,
+    },
+    qrPlaceholder: {
+      backgroundColor: '#E8EAEC',
+      borderRadius: 8,
+      height: 168,
+      width: 168,
     },
     addr: {
       color: colors.textSecondary,
