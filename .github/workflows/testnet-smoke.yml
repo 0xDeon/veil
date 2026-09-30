@@ -52,12 +52,19 @@ jobs:
       - name: Generate burner keypair
         id: keygen
         run: |
+          set -euo pipefail
+          # The secret lands in GITHUB_OUTPUT because the send step needs it
+          # (SENDER_SECRET below). Register it as a mask first so it is redacted
+          # everywhere the runner would otherwise echo it.
           node -e "
             const { Keypair } = require('@stellar/stellar-sdk');
             const kp = Keypair.random();
             console.log('public=' + kp.publicKey());
             console.log('secret=' + kp.secret());
-          " >> "$GITHUB_OUTPUT"
+          " > keypair.txt
+          echo "::add-mask::$(sed -n 's/^secret=//p' keypair.txt)"
+          cat keypair.txt >> "$GITHUB_OUTPUT"
+          rm -f keypair.txt
 
       # ── Sanity-check the keypair outputs ──────────────────────────────────
       # The nightly run failed for months with `curl` exit 22 because the
@@ -83,7 +90,7 @@ jobs:
           # instead of failing the nightly on a hiccup, and print the body on a
           # real failure so the reason is visible in the log.
           for attempt in 1 2 3 4 5; do
-            code=$(curl -sS -o friendbot_response.json -w '%{http_code}' --max-time 60 "$url" || echo 000)
+            code=$(curl -sS -o friendbot_response.json -w '%{http_code}' --max-time 60 "$url" || true)
             if [ "$code" = "200" ]; then
               echo "funded on attempt $attempt (HTTP $code)"
               cat friendbot_response.json
@@ -103,19 +110,36 @@ jobs:
       - name: Generate recipient keypair
         id: recipient
         run: |
+          set -euo pipefail
+          # The secret lands in GITHUB_OUTPUT because the send step needs it
+          # (SENDER_SECRET below). Register it as a mask first so it is redacted
+          # everywhere the runner would otherwise echo it.
           node -e "
             const { Keypair } = require('@stellar/stellar-sdk');
             const kp = Keypair.random();
             console.log('public=' + kp.publicKey());
             console.log('secret=' + kp.secret());
-          " >> "$GITHUB_OUTPUT"
+          " > keypair.txt
+          echo "::add-mask::$(sed -n 's/^secret=//p' keypair.txt)"
+          cat keypair.txt >> "$GITHUB_OUTPUT"
+          rm -f keypair.txt
+
+      - name: Assert the recipient keypair was captured
+        run: |
+          set -euo pipefail
+          pub='${{ steps.recipient.outputs.public }}'
+          if [ -z "$pub" ]; then
+            echo "::error::the recipient public key output is empty — GITHUB_OUTPUT was not written"
+            exit 1
+          fi
+          echo "recipient public key: $pub"
 
       - name: Fund recipient via Friendbot
         run: |
           set -euo pipefail
           url="https://friendbot.stellar.org?addr=${{ steps.recipient.outputs.public }}"
           for attempt in 1 2 3 4 5; do
-            code=$(curl -sS -o friendbot_recipient.json -w '%{http_code}' --max-time 60 "$url" || echo 000)
+            code=$(curl -sS -o friendbot_recipient.json -w '%{http_code}' --max-time 60 "$url" || true)
             if [ "$code" = "200" ]; then
               echo "recipient funded on attempt $attempt"
               exit 0
