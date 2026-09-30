@@ -514,7 +514,8 @@ mod test {
         let client = FactoryClient::new(&env, &contract_id);
         client.init(&install_mock_wallet(&env));
 
-        // 5000 markers is far beyond what fits in one instance entry.
+        // 500 markers is ~37 KB in the old instance entry — enough to show the
+        // growth the persistent markers remove.
         seed_deployed(&env, &contract_id, 500);
         env.cost_estimate().budget().reset_unlimited();
 
